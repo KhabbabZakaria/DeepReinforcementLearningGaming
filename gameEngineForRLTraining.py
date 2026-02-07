@@ -2,6 +2,7 @@ from cardsNpoints import *
 from helpers import *
 import time
 import torch
+from llm import reward_model_LLM_label
 
 # Global storage for training - separate for each player
 saved_log_probs_p1 = []
@@ -14,14 +15,15 @@ saved_action_probs_p2 = []  # For entropy calculation
 #let us initially play 2x2 1vs1: 2C 2P
 
 
-def gamePlay(cards, cardsOriginal, agent_p1, agent_p2):
+def gamePlay(cards, cardsOriginal, agent_p1, agent_p2, noLLM=True):
     ########################################
     ######## Starting game, dealing ########
     ########################################
     #print('let us deal cards. 2 players playing. Each player gets 2 cards')
     # Shuffle and deal the cards
     player1_cards, player2_cards, cards = shuffle_and_deal(cards)
-
+    cardToThrowList = []
+    intrinsic_reward_list = []
 
 
     ############################################################
@@ -72,9 +74,13 @@ def gamePlay(cards, cardsOriginal, agent_p1, agent_p2):
     ########################################
     while len(cards) > 0:
         #print('Player 1 plays')
-        turn = Turn(player1_cards, player2_cards, cards, cardsOriginal, state1, agent_p1)
+        turn = Turn(player1_cards, player2_cards, cards, cardsOriginal, state1, agent_p1, cardToThrowList, reward_model_LLM_label, noLLM)
         turn.singleTurnANDNexts(specialCards)
         player1_cards, player2_cards, cards, state1 = turn.player1_cards, turn.player2_cards, turn.cards, turn.state
+
+        if not noLLM:
+            intrinsic_reward_list.extend(turn.intrinsic_reward_list)
+            cardToThrowList.extend(turn.cardToThrowList)
 
         #showChoice = input("Do you want to show? Y/n: ") #62
         state1List = state1.tolist()
@@ -88,15 +94,19 @@ def gamePlay(cards, cardsOriginal, agent_p1, agent_p2):
 
         if player1ChoiceIdx == 1:
             showFirstPlayer = True
+            reward_model_LLM_label(state1, cardToThrowList, 'Yes', cardsOriginal)
         else:
             showFirstPlayer = False
+            reward_model_LLM_label(state1, cardToThrowList, 'No', cardsOriginal)
+
         
 
         #print('Player 2 plays')
-        turn = Turn(player2_cards, player1_cards, cards, cardsOriginal, state2, agent_p2)
+        # Player 2 always runs with noLLM=True (no intrinsic rewards)
+        turn = Turn(player2_cards, player1_cards, cards, cardsOriginal, state2, agent_p2, cardToThrowList, reward_model_LLM_label, noLLM=True)
         turn.singleTurnANDNexts(specialCards)
         player2_cards, player1_cards, cards, state2 = turn.player1_cards, turn.player2_cards, turn.cards, turn.state
-
+        # Don't extend intrinsic_reward_list for player 2
         if showFirstPlayer is True:
             break
 
@@ -111,14 +121,19 @@ def gamePlay(cards, cardsOriginal, agent_p1, agent_p2):
         saved_state_values_p2.append(state_value2)
         if player2ChoiceIdx == 1:
             showSecondPlayer = True
+            reward_model_LLM_label(state2, cardToThrowList, 'Yes', cardsOriginal)
         else:
             showSecondPlayer = False
+            reward_model_LLM_label(state2, cardToThrowList, 'No', cardsOriginal)
 
         if showSecondPlayer is True:
             #print('Player 1 plays')
-            turn = Turn(player1_cards, player2_cards, cards, cardsOriginal, state1, agent_p1)
+            turn = Turn(player1_cards, player2_cards, cards, cardsOriginal, state1, agent_p1, cardToThrowList, reward_model_LLM_label, noLLM)
             turn.singleTurnANDNexts(specialCards)
             player1_cards, player2_cards, cards, state1 = turn.player1_cards, turn.player2_cards, turn.cards, turn.state
+            if not noLLM:
+                intrinsic_reward_list.extend(turn.intrinsic_reward_list)
+                cardToThrowList.extend(turn.cardToThrowList)
             break
 
 
@@ -139,4 +154,4 @@ def gamePlay(cards, cardsOriginal, agent_p1, agent_p2):
     else:
         player1_points, player2_points, winner = winnerCalculation(player1_cards, player2_cards, cardsOriginal, points)
         
-    return player1_points, player2_points, winner
+    return player1_points, player2_points, winner, intrinsic_reward_list

@@ -1,0 +1,247 @@
+# Card Game Rules
+
+## Overview
+This is a strategic two-player card game where the objective is to achieve the **lowest total points** by the end of the game. Players must manage their hidden cards, use special card powers strategically, and decide when to end the game.
+
+---
+
+## Game Setup
+
+### Deck Composition
+- **Standard Cards**: 52 playing cards (A-K in all four suits: ♠, ♥, ♦, ♣)
+- **Jokers**: 2 Jokers
+- **Total**: 54 cards
+
+### Initial Deal
+1. The deck is shuffled with randomized key assignments (1-54)
+2. Each player receives **2 cards** face down
+3. Remaining cards form the draw pile
+4. Players may look at **one** of their two cards at the start of the game
+
+---
+
+## Card Points System
+
+### Spades (♠) - Black Suit
+- Ace (A♠): 1 point
+- 2♠ through 9♠: Face value (2-9 points)
+- 10♠: 10 points
+- Jack (J♠): 11 points
+- Queen (Q♠): 12 points
+- King (K♠): 13 points
+
+### Hearts (♥) - Red Suit
+- Ace (A♥): 1 point
+- 2♥ through 9♥: Face value (2-9 points)
+- 10♥: 10 points
+- Jack (J♥): 11 points
+- Queen (Q♥): 12 points
+- **King (K♥): 0 points** ⭐ (Special scoring)
+
+### Diamonds (♦) - Red Suit
+- Ace (A♦): 1 point
+- 2♦ through 9♦: Face value (2-9 points)
+- 10♦: 10 points
+- Jack (J♦): 11 points
+- Queen (Q♦): 12 points
+- **King (K♦): 0 points** ⭐ (Special scoring)
+
+### Clubs (♣) - Black Suit
+- Ace (A♣): 1 point
+- 2♣ through 9♣: Face value (2-9 points)
+- 10♣: 10 points
+- Jack (J♣): 11 points
+- Queen (Q♣): 12 points
+- King (K♣): 13 points
+
+### Special Cards
+- **Joker**: -1 point (reduces your score)
+
+---
+
+## Gameplay
+
+### Turn Structure
+The game proceeds in alternating turns between Player 1 and Player 2.
+
+#### Each Turn Consists Of:
+1. **Draw Phase**: Draw the top card from the deck
+2. **Decision Phase**: Choose to keep or discard the drawn card
+   - **Keep**: Replace one of your two cards with the drawn card (discarded card goes to graveyard)
+   - **Discard**: Discard the drawn card to graveyard and keep both original cards
+3. **Special Power Phase**: If you discarded a special card (10, J, Q, K), you may use its power
+4. **Show Phase**: Decide whether to call "Show" to end the game
+
+---
+
+## Special Card Powers
+
+When you **discard** a special card (10, J, Q, or K), you have the option to activate its special ability:
+
+### 10 (Ten) - Self Peek 👁️
+- **Effect**: Look at one of your own two cards
+- **Strategy**: Helps you know what you have before making swap decisions
+
+### J (Jack) - Opponent Peek 🔍
+- **Effect**: Look at one of your opponent's two cards
+- **Strategy**: Gain information about opponent's hand for strategic decisions
+
+### Q (Queen) - Blind Swap 🔄 (RIGHT NOW NOT IMPLEMENTED)
+- **Effect**: Swap one of your cards with one of your opponent's cards **without looking**
+- **Strategy**: Risky move that can benefit you if you suspect opponent has low cards
+
+### K (King) - Informed Swap 👑 (RIGHT NOW NOT IMPLEMENTED)
+- **Effect**: Look at both cards (one of yours and one of opponent's), then decide whether to swap
+- **Strategy**: Most powerful card - see before you swap, but limited availability
+
+> **Note**: In the current implementation, Queen and King powers are disabled (commented out in code)
+
+---
+
+## Ending the Game
+
+### "Show" Declaration
+At the end of each turn, the active player can declare **"Show"** to end the game.
+
+#### Show Rules:
+- **If Player 1 declares Show first**:
+  - Player 2 does NOT get a final turn
+  - Game ends immediately
+
+- **If Player 2 declares Show first**:
+  - Player 1 gets ONE final turn
+  - Game then ends
+
+### Automatic End
+- If the draw pile is depleted (no cards left), the game ends in a **tie**
+
+---
+
+## Winning Conditions
+
+### Point Calculation
+At the end of the game:
+1. All cards are revealed
+2. Each player's two cards are totaled using the points system
+3. The player with the **LOWER total** wins
+
+### Winner Determination
+- **Player with fewer points**: WINS 🏆
+- **Equal points**: TIE 🤝
+- **Deck depleted**: TIE 🤝
+
+---
+
+## Strategy Tips
+
+### General Strategy
+- **Low cards are valuable**: Aces (1 point) and low numbers are your best cards
+- **Red Kings are golden**: K♥ and K♦ worth 0 points - extremely valuable!
+- **Jokers help**: -1 point means they reduce your total
+- **High cards are dangerous**: Face cards (especially black Kings at 13 points) hurt your score
+
+### Information Management
+- Remember which card you looked at initially
+- Use 10s and Jacks to gain information before making swaps
+- Track what cards have been discarded to infer what's left
+
+### Timing Your Show
+- Call "Show" when you believe you have lower points than your opponent
+- Be cautious - if Player 2, remember Player 1 gets a final turn
+- Don't wait too long - opponent might improve their hand
+
+### Special Power Usage
+- **10s**: Use early to know your hand better
+- **Jacks**: Use to scout opponent before attempting swaps
+- **Queens**: High risk/reward - only use if desperate or confident
+- **Kings**: Best power - use wisely for optimal swaps
+
+---
+
+## Technical Notes
+
+### State Representation (for AI/RL Training)
+The game state is represented as a 5-element tensor:
+- `[card_1, card_2, opp_card_1, opp_card_2, decision_code]`
+- Unknown cards: -1
+- Last element: Decision type code (60-71)
+
+### Decision Codes
+- 60: Player 1 initial card peek choice
+- 61: Player 2 initial card peek choice
+- 62: Player 1 show decision
+- 63: Player 2 show decision
+- 64: Keep or discard drawn card
+- 65: Which card to swap
+- 66: Use special power
+- 67: 10's power - which own card to see
+- 68: Jack's power - which opponent card to see
+- 69-71: Queen/King related (currently disabled)
+
+---
+
+## Quick Reference
+
+| Card Type | Special Power | When Used |
+|-----------|---------------|-----------|
+| 10 | Peek at your own card | On discard |
+| J | Peek at opponent's card | On discard |
+| Q | Blind swap cards | On discard (disabled) |
+| K | Look & swap cards | On discard (disabled) |
+
+| Red King | Points | Why Special? |
+|----------|--------|--------------|
+| K♥ / K♦ | 0 | Lowest value for a King! |
+
+| Card Range | Points | Value |
+|------------|--------|-------|
+| Joker | -1 | Best card |
+| Ace | 1 | Second best |
+| Red Kings | 0 | Best regular cards |
+| 2-9 | Face value | Middle range |
+| 10, J, Q | 10-12 | High risk |
+| Black Kings | 13 | Worst cards |
+
+---
+
+## Game Flow Summary
+
+```
+1. Deal 2 cards to each player
+2. Each player peeks at ONE of their cards
+3. REPEAT until game ends:
+   ├─ Player 1's turn:
+   │  ├─ Draw card
+   │  ├─ Keep or discard
+   │  ├─ Use special power (if applicable)
+   │  └─ Declare "Show"? (optional)
+   │
+   └─ Player 2's turn:
+      ├─ Draw card
+      ├─ Keep or discard
+      ├─ Use special power (if applicable)
+      └─ Declare "Show"? (optional)
+4. Calculate points
+5. Lower score WINS!
+```
+
+---
+
+## Example Scenario
+
+**Starting Hand (Player 1):**
+- Card 1: A♠ (1 point) - *looked at this*
+- Card 2: Unknown
+
+**Turn 1:**
+- Draws: K♠ (13 points)
+- Decision: Discard K♠ (too risky to keep)
+- Special Power: Uses 10's power to peek at Card 2
+- Card 2 revealed: K♥ (0 points)
+- Show?: NO (excellent hand, wait for opponent to make mistakes)
+
+**Current Total:** 1 + 0 = **1 point** (very strong position!)
+
+---
+
+*Game designed for strategic decision-making under uncertainty with emphasis on memory, risk assessment, and timing.*

@@ -1,8 +1,10 @@
 import torch.nn.functional as F
 import torch
 import matplotlib.pyplot as plt
+import argparse
 from gameEngineForRLTraining import gamePlay, saved_log_probs_p1, saved_state_values_p1, saved_log_probs_p2, saved_state_values_p2, saved_action_probs_p1
 from actorcritic import policy, device, Agent, Policy
+from helpers import plot_training_losses
 
 from cardsNpoints import cardsGeneration
 
@@ -24,7 +26,7 @@ agent_p2 = Agent(policy_opponent, is_eval=True)  # Frozen opponent
 optimizer = torch.optim.Adam(policy_train.parameters(), lr=learning_rate)
 
 
-def train():
+def train(noLLM=True):
     loss_history = []
     actor_loss_history = []
     critic_loss_history = []
@@ -40,38 +42,54 @@ def train():
         saved_log_probs_p2.clear()
         saved_state_values_p2.clear()
 
-        player1_points, player2_points, winner = gamePlay(cards, cardsOriginal, agent_p1, agent_p2)
-        
-        # Assign rewards based on winner (zero-sum game)
-        # Using smaller rewards for better critic learning
-        if winner == 1:
-            reward1 = 1.0  # Player 1 wins
-            reward2 = -1.0  # Player 2 loses
-        elif winner == 2:
-            reward1 = -1.0  # Player 1 loses
-            reward2 = 1.0  # Player 2 wins
-        else:
-            reward1 = 0.0  # Tie
-            reward2 = 0.0  # Tie
 
-        # Convert to tensors
-        reward1 = torch.tensor([reward1], dtype=torch.float32).to(device)
-        reward2 = torch.tensor([reward2], dtype=torch.float32).to(device)
+
+        player1_points, player2_points, winner, intrinsic_reward_list = gamePlay(cards, cardsOriginal, agent_p1, agent_p2, noLLM=noLLM)
+        
+        # Assign terminal reward based on winner (zero-sum game)
+        if winner == 1:
+            terminal_reward = 1.0  # Player 1 wins
+        elif winner == 2:
+            terminal_reward = -1.0  # Player 1 loses
+        else:
+            terminal_reward = 0.0  # Tie
 
         # Train ONLY Player 1's experiences
         # Player 2 uses the same model but doesn't contribute to training
         if len(saved_log_probs_p1) == 0:
             continue
         
-        # Only use Player 1's experiences
-        returns_p1 = [reward1 for _ in saved_log_probs_p1]
+        # Calculate proper discounted returns combining intrinsic and terminal rewards
+        if noLLM or len(intrinsic_reward_list) == 0:
+            # Pure RL: all actions get same terminal reward
+            returns_p1 = [torch.tensor([terminal_reward], dtype=torch.float32).to(device) 
+                          for _ in saved_log_probs_p1]
+        else:
+            # With LLM: proper discounted returns (Bellman backup)
+            # Start from terminal reward and work backwards through intrinsic rewards
+            returns_p1 = []
+            G = terminal_reward  # Initialize with terminal reward
+            
+            # Pad or trim intrinsic_reward_list to match number of actions
+            num_actions = len(saved_log_probs_p1)
+            if len(intrinsic_reward_list) < num_actions:
+                # Pad with zeros if we have fewer intrinsic rewards than actions
+                padded_intrinsic = intrinsic_reward_list + [0.0] * (num_actions - len(intrinsic_reward_list))
+            else:
+                # Use only the first num_actions intrinsic rewards
+                padded_intrinsic = intrinsic_reward_list[:num_actions]
+            
+            # Work backwards through the episode
+            for intrinsic_r in reversed(padded_intrinsic):
+                G = intrinsic_r + gamma * G  # Bellman equation
+                returns_p1.insert(0, torch.tensor([G], dtype=torch.float32).to(device))
         
         returns = torch.stack(returns_p1)
         saved_state_values_tensor = torch.stack(saved_state_values_p1).squeeze()
         saved_log_probs_tensor = torch.stack(saved_log_probs_p1)
         
         # Calculate advantage
-        advantage = returns - saved_state_values_tensor.detach()
+        advantage = returns.squeeze() - saved_state_values_tensor.detach()
         
         # Normalize advantage for stability
         if len(advantage) > 1:
@@ -119,82 +137,30 @@ def train():
             avg_loss = sum(loss_history[-10:]) / len(loss_history[-10:])
             num_actions_p1 = len(saved_log_probs_p1)
             num_actions_p2 = len(saved_log_probs_p2)
-            print(f"Episode {e}, Loss: {loss.item():.4f}, Actor: {actor_loss.item():.4f}, Critic: {critic_loss.item():.4f} | Winner: {winner} | P1 actions: {num_actions_p1}, P2 actions: {num_actions_p2} | Rewards: P1={reward1.item():.1f}, P2={reward2.item():.1f}")
+            avg_return = returns.mean().item() if len(returns) > 0 else 0.0
+            num_intrinsic = len(intrinsic_reward_list)
+            print(f"Episode {e}, Loss: {loss.item():.4f}, Actor: {actor_loss.item():.4f}, Critic: {critic_loss.item():.4f} | Winner: {winner} | P1 actions: {num_actions_p1} | Terminal R: {terminal_reward:.1f}, Avg Return: {avg_return:.3f}, Intrinsic: {num_intrinsic}")
     
     # Save final model
-    torch.save(policy_train.state_dict(), "model_final.pth")
-    print("Final model saved as model_final.pth")
+    if noLLM:
+        torch.save(policy_train.state_dict(), "model_final_pureDL.pth")
+        print("Final pure DL model saved as model_final_pureDL.pth")
+    else:
+        torch.save(policy_train.state_dict(), "model_final_withLLM.pth")
+        print("Final model saved as model_final_withLLM.pth")
     
     # Plot loss curves
-    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-    
-    # Total Loss
-    ax1 = axes[0, 0]
-    ax1.plot(loss_history, alpha=0.3, label='Total Loss', color='blue')
-    window_size = 50
-    if len(loss_history) >= window_size:
-        moving_avg = [sum(loss_history[i:i+window_size])/window_size 
-                      for i in range(len(loss_history)-window_size+1)]
-        ax1.plot(range(window_size-1, len(loss_history)), moving_avg, 
-                linewidth=2, label=f'Moving Avg ({window_size} episodes)', color='darkblue')
-    ax1.set_xlabel('Episode')
-    ax1.set_ylabel('Loss')
-    ax1.set_title('Total Loss Over Time')
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
-    
-    # Actor Loss
-    ax2 = axes[0, 1]
-    ax2.plot(actor_loss_history, alpha=0.3, label='Actor Loss', color='red')
-    if len(actor_loss_history) >= window_size:
-        moving_avg_actor = [sum(actor_loss_history[i:i+window_size])/window_size 
-                           for i in range(len(actor_loss_history)-window_size+1)]
-        ax2.plot(range(window_size-1, len(actor_loss_history)), moving_avg_actor, 
-                linewidth=2, label=f'Moving Avg ({window_size} episodes)', color='darkred')
-    ax2.set_xlabel('Episode')
-    ax2.set_ylabel('Loss')
-    ax2.set_title('Actor Loss Over Time')
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
-    
-    # Critic Loss
-    ax3 = axes[1, 0]
-    ax3.plot(critic_loss_history, alpha=0.3, label='Critic Loss', color='green')
-    if len(critic_loss_history) >= window_size:
-        moving_avg_critic = [sum(critic_loss_history[i:i+window_size])/window_size 
-                            for i in range(len(critic_loss_history)-window_size+1)]
-        ax3.plot(range(window_size-1, len(critic_loss_history)), moving_avg_critic, 
-                linewidth=2, label=f'Moving Avg ({window_size} episodes)', color='darkgreen')
-    ax3.set_xlabel('Episode')
-    ax3.set_ylabel('Loss')
-    ax3.set_title('Critic Loss Over Time')
-    ax3.legend()
-    ax3.grid(True, alpha=0.3)
-    
-    # Combined comparison
-    ax4 = axes[1, 1]
-    if len(actor_loss_history) >= window_size:
-        ax4.plot(range(window_size-1, len(actor_loss_history)), moving_avg_actor, 
-                linewidth=2, label='Actor Loss', color='red')
-        ax4.plot(range(window_size-1, len(critic_loss_history)), moving_avg_critic, 
-                linewidth=2, label='Critic Loss', color='green')
-        ax4.plot(range(window_size-1, len(loss_history)), moving_avg, 
-                linewidth=2, label='Total Loss', color='blue')
-    ax4.set_xlabel('Episode')
-    ax4.set_ylabel('Loss')
-    ax4.set_title('All Losses Comparison (Moving Avg)')
-    ax4.legend()
-    ax4.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig('training_loss.png')
-    print("Loss plots saved as training_loss.png")
-    plt.savefig('training_loss.png')
-    print("Loss plot saved as training_loss.png")
-    plt.show()
+    if noLLM:
+        plot_training_losses(loss_history, actor_loss_history, critic_loss_history, filename="training_losses_pureDL.png")
+    else:
+        plot_training_losses(loss_history, actor_loss_history, critic_loss_history, filename="training_losses_withLLM.png")
 
 
 if __name__ == "__main__":
-    train()
+    parser = argparse.ArgumentParser(description='Train the card game AI')
+    parser.add_argument('--noLLM', action='store_true', help='Run without LLM (pure RL training)')
+    args = parser.parse_args()
+    
+    train(noLLM=args.noLLM)
 
 

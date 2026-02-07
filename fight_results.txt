@@ -1,0 +1,13 @@
+
+============================================================
+Fight Results - 100 games
+============================================================
+Model 1: model_final_pureDL.pth
+Model 2: model_final_withLLM.pth
+
+Model 1 Wins: 53 (53.0%)
+Model 2 Wins: 43 (43.0%)
+Ties:         4 (4.0%)
+
+🏆 Model 1 WINS the tournament! (model_final_pureDL.pth)
+============================================================

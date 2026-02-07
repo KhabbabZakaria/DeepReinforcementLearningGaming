@@ -1,6 +1,7 @@
 import random
 import time
 import torch
+import matplotlib.pyplot as plt
 
 # Function to shuffle and deal cards to two players
 def shuffle_and_deal(cards):
@@ -43,6 +44,7 @@ class Rules:
         self.state = state
         self.agent = agent
         self.show_card = show_card
+        self.player_action_str = ''
 
     def _rules10(self, index):
         #checks one of player's own card
@@ -81,6 +83,7 @@ class Rules:
             stateList = self.state.tolist()
             stateList[choiceIndex] = cardToSee
             self.state = torch.tensor(stateList, dtype=torch.float32)
+            self.player_action_str = f'Checked own card {choiceIndex} with value {cardToSee}'
 
 
         if 'J' in self.cardToThrow:
@@ -95,6 +98,7 @@ class Rules:
             stateList = self.state.tolist()
             stateList[choiceIndex+2] = cardToSee
             self.state = torch.tensor(stateList, dtype=torch.float32)
+            self.player_action_str = f'Checked opponent card {choiceIndex} with value {cardToSee}'
 
         if 'Q' in self.cardToThrow:
             pass
@@ -130,13 +134,18 @@ class Rules:
 
 
 class Turn:
-    def __init__(self, player1_cards, player2_cards, cards, cardsOriginal, state, agent):
+    def __init__(self, player1_cards, player2_cards, cards, cardsOriginal, state, agent, cardToThrowList, reward_model_LLM_label, noLLM=True):
         self.player1_cards = player1_cards
         self.player2_cards = player2_cards
         self.cards = cards
         self.cardsOriginal = cardsOriginal
         self.state = state
         self.agent = agent
+        self.cardToThrowList = cardToThrowList
+        self.reward_model_LLM_label = reward_model_LLM_label
+        self.intrinsic_reward = 0
+        self.intrinsic_reward_list = []
+        self.noLLM = noLLM
 
     # function to take one card from the deck during the game
     def _draw_card(self):
@@ -159,8 +168,14 @@ class Turn:
         choiceIdx = int(self.agent.act(self.state)[0].item())
         if choiceIdx == 1:
             choice = 'Y'
+            if not self.noLLM:
+                self.intrinsic_reward = self.reward_model_LLM_label(self.state, self.cardToThrowList, 'Yes', self.cardsOriginal)
+                self.intrinsic_reward_list.append(self.intrinsic_reward)
         else:
             choice = 'N'
+            if not self.noLLM:
+                self.intrinsic_reward = self.reward_model_LLM_label(self.state, self.cardToThrowList, 'No', self.cardsOriginal)
+                self.intrinsic_reward_list.append(self.intrinsic_reward)
 
         if choice.upper() == 'Y':
             #choiceIndex = int(input('Which card do you wanna swap? Choose between 0 or 1: ')) #65
@@ -169,11 +184,18 @@ class Turn:
             self.state = torch.tensor(stateList, dtype=torch.float32)
             choiceIndex = int(self.agent.act(self.state)[0].item())
 
+            if not self.noLLM:
+                self.intrinsic_reward = self.reward_model_LLM_label(self.state, self.cardToThrowList, f'Swapped card {choiceIndex} ', self.cardsOriginal)
+                self.intrinsic_reward_list.append(self.intrinsic_reward)
+
             cardToThrow = show_card(self.player1_cards, choiceIndex, self.cardsOriginal)
+            cardToThrowKey = self.player1_cards[choiceIndex]  # Store the key being thrown
             self.player1_cards[choiceIndex] = card_key
         else:
             #print('You did not swap, Going to next')
             cardToThrow = card_value
+            cardToThrowKey = card_key  # Store the key being thrown
+        self.cardToThrowList.append(cardToThrowKey)
         return cardToThrow
 
     def singleTurnANDNexts(self, specialCards):
@@ -192,10 +214,22 @@ class Turn:
             self.state = torch.tensor(stateList, dtype=torch.float32)
             choiceIdx = int(self.agent.act(self.state)[0].item())
             if choiceIdx == 1:
+                if not self.noLLM:
+                    self.intrinsic_reward = self.reward_model_LLM_label(self.state, self.cardToThrowList,  ' Yes', self.cardsOriginal)
+                    self.intrinsic_reward_list.append(self.intrinsic_reward)
+                
                 rules = Rules(cardToThrow, self.player1_cards, self.player2_cards, self.cardsOriginal, self.state, self.agent)
-                self.player1_cards, self.layer2_cards = rules.act()
-
-
+                self.player1_cards, self.player2_cards = rules.act()
+                player_action_str = rules.player_action_str
+                state = rules.state
+                if not self.noLLM:
+                    self.intrinsic_reward = self.reward_model_LLM_label(state, self.cardToThrowList,  player_action_str, self.cardsOriginal)
+                    self.intrinsic_reward_list.append(self.intrinsic_reward)
+                
+            else:
+                if not self.noLLM:
+                    self.intrinsic_reward = self.reward_model_LLM_label(self.state, self.cardToThrowList,  ' No', self.cardsOriginal)
+                    self.intrinsic_reward_list.append(self.intrinsic_reward)
 
 
 
@@ -234,4 +268,81 @@ def winnerCalculation(player1_cards, player2_cards, cardsOriginal, points):
         winner = 0
 
     return player1_points, player2_points, winner
+    
+
+def plot_training_losses(loss_history, actor_loss_history, critic_loss_history, filename='training_loss.png'):
+    """
+    Plot training loss curves for actor-critic model
+    
+    Args:
+        loss_history: List of total loss values
+        actor_loss_history: List of actor loss values
+        critic_loss_history: List of critic loss values
+        filename: Name of the file to save the plot
+    """
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+    
+    # Total Loss
+    ax1 = axes[0, 0]
+    ax1.plot(loss_history, alpha=0.3, label='Total Loss', color='blue')
+    window_size = 50
+    if len(loss_history) >= window_size:
+        moving_avg = [sum(loss_history[i:i+window_size])/window_size 
+                      for i in range(len(loss_history)-window_size+1)]
+        ax1.plot(range(window_size-1, len(loss_history)), moving_avg, 
+                linewidth=2, label=f'Moving Avg ({window_size} episodes)', color='darkblue')
+    ax1.set_xlabel('Episode')
+    ax1.set_ylabel('Loss')
+    ax1.set_title('Total Loss Over Time')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # Actor Loss
+    ax2 = axes[0, 1]
+    ax2.plot(actor_loss_history, alpha=0.3, label='Actor Loss', color='red')
+    if len(actor_loss_history) >= window_size:
+        moving_avg_actor = [sum(actor_loss_history[i:i+window_size])/window_size 
+                           for i in range(len(actor_loss_history)-window_size+1)]
+        ax2.plot(range(window_size-1, len(actor_loss_history)), moving_avg_actor, 
+                linewidth=2, label=f'Moving Avg ({window_size} episodes)', color='darkred')
+    ax2.set_xlabel('Episode')
+    ax2.set_ylabel('Loss')
+    ax2.set_title('Actor Loss Over Time')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    # Critic Loss
+    ax3 = axes[1, 0]
+    ax3.plot(critic_loss_history, alpha=0.3, label='Critic Loss', color='green')
+    if len(critic_loss_history) >= window_size:
+        moving_avg_critic = [sum(critic_loss_history[i:i+window_size])/window_size 
+                            for i in range(len(critic_loss_history)-window_size+1)]
+        ax3.plot(range(window_size-1, len(critic_loss_history)), moving_avg_critic, 
+                linewidth=2, label=f'Moving Avg ({window_size} episodes)', color='darkgreen')
+    ax3.set_xlabel('Episode')
+    ax3.set_ylabel('Loss')
+    ax3.set_title('Critic Loss Over Time')
+    ax3.legend()
+    ax3.grid(True, alpha=0.3)
+    
+    # Combined comparison
+    ax4 = axes[1, 1]
+    if len(actor_loss_history) >= window_size:
+        ax4.plot(range(window_size-1, len(actor_loss_history)), moving_avg_actor, 
+                linewidth=2, label='Actor Loss', color='red')
+        ax4.plot(range(window_size-1, len(critic_loss_history)), moving_avg_critic, 
+                linewidth=2, label='Critic Loss', color='green')
+        ax4.plot(range(window_size-1, len(loss_history)), moving_avg, 
+                linewidth=2, label='Total Loss', color='blue')
+    ax4.set_xlabel('Episode')
+    ax4.set_ylabel('Loss')
+    ax4.set_title('All Losses Comparison (Moving Avg)')
+    ax4.legend()
+    ax4.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(filename)
+    print(f"Loss plots saved as {filename}")
+    plt.show()
+
     
