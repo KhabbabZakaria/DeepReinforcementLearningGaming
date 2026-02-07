@@ -127,7 +127,7 @@ Results are saved to `fight_results.txt`.
 
 ```bash
 # Clone the repository
-git clone <your-repo-url>
+git clone https://github.com/KhabbabZakaria/DeepReinforcementLearningGaming.git
 cd <folder name>
 
 # Create virtual environment
